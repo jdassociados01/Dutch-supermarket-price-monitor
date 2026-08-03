@@ -1,8 +1,8 @@
-.venv/
-__pycache__/
-.pytest_cache/
+node_modules/
+dist/
 .env
 reports/*.html
 reports/*.csv
 reports/*.md
 data/latest.json
+data/history.csv

@@ -9,11 +9,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-node@v4
         with:
-          python-version: '3.12'
-      - run: pip install -r requirements.txt
-      - run: python -m pytest
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
       - name: Run scheduled collection
         if: github.event_name == 'schedule'
         env:
@@ -26,7 +28,7 @@ jobs:
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
           SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
-        run: python -m src.main --send-email
+        run: npm start -- --send-email
       - name: Run manually
         if: github.event_name == 'workflow_dispatch'
         env:
@@ -36,7 +38,7 @@ jobs:
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
           SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
-        run: python -m src.main --manual --send-email
+        run: npm start -- --manual --send-email
       - uses: actions/upload-artifact@v4
         with:
           name: supermarket-price-report

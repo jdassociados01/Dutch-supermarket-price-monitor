@@ -4,12 +4,12 @@ Projeto independente para comparar semanalmente preços de produtos em supermerc
 
 ## Importante
 
-Este projeto não altera nem depende do BuscarBaby. Coloque-o em uma pasta e repositório separados.
+Este projeto não altera nem depende do BuscarBaby. Fica em pasta e repositório separados.
 
 ## Estado atual
 
-- Estrutura completa do projeto criada.
-- Lista de produtos e supermercados configurável.
+- Estrutura completa do projeto criada (TypeScript/Node).
+- Lista de produtos e supermercados configurável via YAML.
 - Normalização, comparação, histórico, relatórios e envio por e-mail implementados.
 - GitHub Actions configurado para segunda-feira às 08:00 em `Europe/Amsterdam`.
 - Conectores dos supermercados estão em modo seguro de implementação: não inventam preços e retornam erro claro até que cada fonte oficial seja validada.
@@ -17,15 +17,9 @@ Este projeto não altera nem depende do BuscarBaby. Coloque-o em uma pasta e rep
 ## Instalação
 
 ```bash
-python -m venv .venv
-# Windows
-.venv\Scripts\activate
-# macOS/Linux
-source .venv/bin/activate
-
-pip install -r requirements.txt
+npm install
 cp .env.example .env
-python -m src.main --manual
+npm run dev
 ```
 
 ## Configuração
@@ -44,15 +38,23 @@ SMTP_USERNAME=
 SMTP_PASSWORD=
 ```
 
-Edite os produtos em `config/products.yaml`.
+Edite os produtos em `config/products.yaml` e os supermercados em `config/stores.yaml`.
 
 ## Execução
 
 ```bash
-python -m src.main --manual
+npm run dev          # execução manual (ignora o gate de dia/hora)
+npm start -- --manual --send-email
 ```
 
-Os relatórios serão gravados em `reports/` e o histórico em `data/history.csv`.
+Os relatórios serão gravados em `reports/` e o histórico em `data/history.csv` e `data/latest.json`.
+
+## Testes e checagem de tipos
+
+```bash
+npm test
+npm run typecheck
+```
 
 ## GitHub Actions
 
