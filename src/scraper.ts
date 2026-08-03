@@ -223,18 +223,107 @@ export async function checkHoogvliet(product: Product, page: Page): Promise<Pric
 }
 
 // ---------------------------------------------------------------------------
-// Lidl, Aldi, Makro — ainda não implementados (fase 2, depois que Albert
-// Heijn/Jumbo/Hoogvliet estiverem funcionando). Retornam sempre verificação
-// manual até serem implementados de verdade.
+// Lidl
+// Investigado nesta sessão: a busca em lidl.nl não retorna produtos reais
+// para mercearia fresca (ex.: "banaan", "kipfilet" só trazem sugestões de
+// categoria, 0 produtos de verdade) — o site não parece ter um catálogo
+// completo de supermercado pesquisável. O folder semanal existe, mas é uma
+// revista em imagens (page-01.png, page-02.png...), sem texto extraível, e
+// não vamos fazer OCR. Sem fonte confiável, sempre verificação manual.
 // ---------------------------------------------------------------------------
 export async function checkLidl(product: Product, _page: Page): Promise<PriceResult> {
   return manualCheckNeeded("Lidl", product);
 }
 
-export async function checkAldi(product: Product, _page: Page): Promise<PriceResult> {
-  return manualCheckNeeded("Aldi", product);
+// ---------------------------------------------------------------------------
+// Aldi
+// Testado nesta sessão com Playwright real: funciona, sem bloqueio de bot.
+// A busca retorna dois grupos de resultados ("Webshop" genérico, cheio de
+// produtos não-alimentares que só coincidem por palavra, e o catálogo real
+// da loja); usamos somente os cards `.product-tile` do catálogo da loja.
+// ---------------------------------------------------------------------------
+export async function checkAldi(product: Product, page: Page): Promise<PriceResult> {
+  const term = encodeURIComponent(product.searchTerms[0]!);
+  const url = `https://www.aldi.nl/zoeken.html?searchbox=${term}&query=${term}`;
+
+  let response;
+  try {
+    response = await page.goto(url, { timeout: NAV_TIMEOUT_MS, waitUntil: "networkidle" });
+  } catch {
+    return manualCheckNeeded("Aldi", product);
+  }
+  if (!response || response.status() >= 400) {
+    return manualCheckNeeded("Aldi", product);
+  }
+
+  // Timeout curto nas checagens por card: alguns tiles não têm preço (ex.:
+  // itens sem estoque) e o timeout padrão do Playwright (30s) por elemento
+  // ausente deixaria a busca extremamente lenta se esperássemos em cada um.
+  const shortTimeout = { timeout: 3000 };
+
+  const cards = page.locator(".product-tile");
+  const count = await cards.count();
+  for (let i = 0; i < count; i++) {
+    const card = cards.nth(i);
+    const name = (await card.locator('h2[class*="product-tile__content__upper"]').first().innerText(shortTimeout).catch(() => "")).trim();
+    if (!name || !matchesSearchTerm(name, product)) continue;
+
+    const quantityRaw = (await card.locator('[class*="tag__info"]').first().innerText(shortTimeout).catch(() => "")).trim();
+
+    // Produtos de kg nunca são vendidos por litro (mesma regra do Jumbo).
+    if (product.comparisonUnit === "kg" && /\bl\b|liter/i.test(quantityRaw)) continue;
+
+    const priceRaw = await card.locator('[class*="tag__price"]').first().innerText(shortTimeout).catch(() => "");
+    const priceMatches = [...priceRaw.matchAll(/\d+[.,]\d{2}/g)].map((m) => Number(m[0].replace(",", ".")));
+    const price = priceMatches[0] ?? null;
+    if (price === null) continue;
+
+    const href = await card.locator('a[class*="product-tile__action"]').first().getAttribute("href", shortTimeout).catch(() => null);
+
+    let promotion: string | null = null;
+    const voorMatch = /(\d+)\s*voor/i.exec(priceRaw);
+    if (voorMatch) {
+      promotion = `${voorMatch[1]} voor €${price.toFixed(2)}`;
+    } else if (/op=op/i.test(priceRaw)) {
+      promotion = "OP=OP";
+    }
+
+    const isPerUnit = /^per\s/i.test(quantityRaw);
+    // A Aldi às vezes mostra uma segunda linha com o preço por kg já
+    // calculado (ex.: "1.5 kg\nkg = 1.30") — reaproveita no mesmo formato
+    // do Jumbo para entrar na comparação de mais barato do report.ts.
+    const kgHintMatch = /kg\s*=\s*([\d.,]+)/i.exec(quantityRaw);
+    const packageSize = quantityRaw.split("\n")[0]!.trim();
+
+    return {
+      store: "Aldi",
+      productId: product.id,
+      displayName: product.displayName,
+      status: "ok",
+      price,
+      quantity: isPerUnit ? null : packageSize || null,
+      pricePerUnit: isPerUnit
+        ? `€${price.toFixed(2)} ${quantityRaw}`
+        : kgHintMatch
+          ? `€${kgHintMatch[1]} per kilo`
+          : null,
+      promotion,
+      url: href ? new URL(href, "https://www.aldi.nl").toString() : url,
+    };
+  }
+  return notFound("Aldi", product);
 }
 
+// ---------------------------------------------------------------------------
+// Makro
+// Confirmado nesta sessão: bloqueia acesso automatizado (HTTP 403, página
+// "ARE YOU LOST?") mesmo via Playwright real — mesmo padrão de bloqueio da
+// Albert Heijn e da Hoogvliet. A busca real (via navegação manual) mostrou
+// preços de "Makro Amsterdam" misturados com resultados irrelevantes de um
+// marketplace geral, mas o bloqueio nunca deixou inspecionar a estrutura da
+// página para montar um parser confiável. Sem contornar, então verificação
+// manual até isso mudar.
+// ---------------------------------------------------------------------------
 export async function checkMakro(product: Product, _page: Page): Promise<PriceResult> {
   return manualCheckNeeded("Makro", product);
 }

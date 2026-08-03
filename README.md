@@ -40,12 +40,14 @@ npm run check-prices -- --send-email
 
 | Supermercado | Situação |
 |---|---|
-| Jumbo | Funciona — testado com Playwright real. |
-| Albert Heijn | Bloqueia acesso automatizado (Akamai Bot Manager). Retorna sempre "Verificação manual necessária" neste ambiente. |
-| Hoogvliet | Bloqueia acesso automatizado (Incapsula). Retorna sempre "Verificação manual necessária" neste ambiente. |
-| Lidl, Aldi, Makro | Ainda não implementados. |
+| Jumbo | Funciona — testado com Playwright real, com preço, quantidade, preço/kg-unidade e promoção. |
+| Aldi | Funciona — testado com Playwright real. Preço por kg já vem calculado pelo próprio site quando disponível. |
+| Albert Heijn | Bloqueia acesso automatizado (Akamai Bot Manager, confirmado até com Playwright real). Retorna sempre "Verificação manual necessária" neste ambiente. |
+| Hoogvliet | Bloqueia acesso automatizado (Incapsula, confirmado até com Playwright real). Retorna sempre "Verificação manual necessária" neste ambiente. |
+| Makro | Bloqueia acesso automatizado (mesmo padrão de bloqueio). Retorna sempre "Verificação manual necessária". |
+| Lidl | Não tem catálogo de mercearia pesquisável no site (busca só retorna sugestões de categoria) e o folder semanal é só imagens, sem texto extraível. Retorna sempre "Verificação manual necessária". |
 
-Nenhum bloqueio de bot é contornado (sem CAPTCHA, sem login, sem disfarce de automação). Quando um site bloqueia a consulta, o resultado mostra "Verificação manual necessária" em vez de um preço inventado.
+Nenhum bloqueio de bot é contornado (sem CAPTCHA, sem login, sem disfarce de automação, sem OCR do folder). Quando um site bloqueia a consulta ou não tem fonte confiável, o resultado mostra "Verificação manual necessária" em vez de um preço inventado.
 
 ## GitHub Actions
 
