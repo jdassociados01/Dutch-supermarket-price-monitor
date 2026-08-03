@@ -1,70 +1,52 @@
 # Dutch Supermarket Price Monitor
 
-Projeto independente para comparar semanalmente preços de produtos em supermercados da Holanda.
+Script pessoal para consultar, toda segunda-feira, os preços e promoções de uma lista fixa de produtos em supermercados holandeses. Não é um produto, não tem usuários, não tem banco de dados nem API.
 
-## Importante
+## Estrutura
 
-Este projeto não altera nem depende do BuscarBaby. Fica em pasta e repositório separados.
-
-## Estado atual
-
-- Estrutura completa do projeto criada (TypeScript/Node).
-- Lista de produtos e supermercados configurável via YAML.
-- Normalização, comparação, histórico, relatórios e envio por e-mail implementados.
-- GitHub Actions configurado para segunda-feira às 08:00 em `Europe/Amsterdam`.
-- Conectores dos supermercados estão em modo seguro de implementação: não inventam preços e retornam erro claro até que cada fonte oficial seja validada.
+```text
+src/
+  products.ts   # lista de produtos e termos de busca
+  stores.ts     # lista de supermercados
+  scraper.ts    # checkAlbertHeijn, checkJumbo, checkHoogvliet, checkLidl, checkAldi, checkMakro
+  report.ts     # gera o HTML e o CSV
+  email.ts      # envia o e-mail semanal
+  main.ts       # orquestra tudo
+```
 
 ## Instalação
 
 ```bash
 npm install
+npx playwright install chromium
 cp .env.example .env
-npm run dev
 ```
 
-## Configuração
+Edite `.env` com os dados de SMTP para o envio de e-mail.
 
-Edite `.env`:
-
-```env
-POSTCODE=
-HOUSE_NUMBER=
-CITY=
-EMAIL_FROM=
-EMAIL_TO=
-SMTP_HOST=
-SMTP_PORT=587
-SMTP_USERNAME=
-SMTP_PASSWORD=
-```
-
-Edite os produtos em `config/products.yaml` e os supermercados em `config/stores.yaml`.
-
-## Execução
+## Uso
 
 ```bash
-npm run dev          # execução manual (ignora o gate de dia/hora)
-npm start -- --manual --send-email
+npm run check-prices
 ```
 
-Os relatórios serão gravados em `reports/` e o histórico em `data/history.csv` e `data/latest.json`.
-
-## Testes e checagem de tipos
+Gera `reports/prices-DD-MM-AAAA.html` e `.csv`. Para também enviar o e-mail:
 
 ```bash
-npm test
-npm run typecheck
+npm run check-prices -- --send-email
 ```
+
+## Estado atual por supermercado
+
+| Supermercado | Situação |
+|---|---|
+| Jumbo | Funciona — testado com Playwright real. |
+| Albert Heijn | Bloqueia acesso automatizado (Akamai Bot Manager). Retorna sempre "Verificação manual necessária" neste ambiente. |
+| Hoogvliet | Bloqueia acesso automatizado (Incapsula). Retorna sempre "Verificação manual necessária" neste ambiente. |
+| Lidl, Aldi, Makro | Ainda não implementados. |
+
+Nenhum bloqueio de bot é contornado (sem CAPTCHA, sem login, sem disfarce de automação). Quando um site bloqueia a consulta, o resultado mostra "Verificação manual necessária" em vez de um preço inventado.
 
 ## GitHub Actions
 
-1. Crie um repositório separado no GitHub.
-2. Envie apenas esta pasta para o novo repositório.
-3. Em **Settings → Secrets and variables → Actions**, crie os secrets descritos em `.github/workflows/weekly-price-check.yml`.
-4. Ative Actions.
-
-O workflow roda duas vezes em UTC e o script executa a coleta somente quando for segunda-feira às 08:00 no horário de Amsterdam. Isso trata automaticamente CET e CEST.
-
-## Próxima etapa necessária
-
-Validar, individualmente, as fontes oficiais de Lidl, Aldi, Jumbo, Albert Heijn, Hoogvliet e Makro e implementar cada conector em `src/stores/`. O sistema não usa preços de mecanismos de busca e não contorna CAPTCHA ou login.
+O workflow em `.github/workflows/weekly-price-check.yml` roda toda segunda-feira (duas vezes em UTC, para cobrir CET/CEST) e também pode ser disparado manualmente. Configure os secrets `EMAIL_FROM`, `EMAIL_TO`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD` no repositório.

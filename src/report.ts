@@ -1,67 +1,107 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { PriceResult, ProductConfig } from "./models.js";
-import { chooseCheapest } from "./comparator.js";
+import { ALL_STORES } from "./stores.js";
+import type { PriceResult } from "./scraper.js";
+import type { Product } from "./products.js";
 
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-function renderCell(item: PriceResult | undefined, isWinner: boolean): string {
-  const cls = isWinner ? ' class="winner"' : "";
-  if (item && !item.error) {
-    const parts = [`€${item.price?.toFixed(2)}`];
-    if (item.normalized_price) {
-      parts.push(`€${item.normalized_price.toFixed(2)}/${item.normalized_unit}`);
-    }
-    if (item.promotion) parts.push("Promoção");
-    if (item.source_url) parts.push(`<a href="${item.source_url}">fonte</a>`);
-    return `<td${cls}>${parts.join("<br>")}</td>`;
-  }
-  return `<td${cls}><span class="error">${escapeHtml(item?.error ?? "Não encontrado")}</span></td>`;
+/** Extrai um valor numérico de "€1,16 per stuk" / "€6,65 per kilo", quando existir. */
+function perUnitValue(result: PriceResult): number | null {
+  if (result.status !== "ok" || !result.pricePerUnit) return null;
+  const match = /([\d.,]+)\s*(?:per|\/)\s*(kilo|kg|stuk)/i.exec(result.pricePerUnit);
+  return match ? Number(match[1]!.replace(",", ".")) : null;
 }
 
-export function generateHtml(results: PriceResult[], products: ProductConfig[], stores: string[]): string {
+function cellText(result: PriceResult | undefined): string {
+  if (!result) return "";
+  if (result.status === "not_found") return "Não encontrado";
+  if (result.status === "manual_check_needed") return "Verificação manual necessária";
+
+  const parts: string[] = [];
+  if (result.price !== null) parts.push(`€${result.price.toFixed(2)}`);
+  if (result.quantity) parts.push(result.quantity);
+  if (result.pricePerUnit) parts.push(result.pricePerUnit);
+  if (result.promotion) parts.push(`Promoção: ${result.promotion}`);
+  return parts.join(" — ") || "Não encontrado";
+}
+
+function findCheapestStores(rowResults: (PriceResult | undefined)[]): Set<string> {
+  const withValue = rowResults.filter((r): r is PriceResult => !!r && perUnitValue(r) !== null);
+  if (withValue.length === 0) return new Set();
+  const min = Math.min(...withValue.map((r) => perUnitValue(r)!));
+  return new Set(withValue.filter((r) => perUnitValue(r) === min).map((r) => r.store));
+}
+
+export function generateHtml(products: Product[], results: PriceResult[], weekLabel: string): string {
   fs.mkdirSync("reports", { recursive: true });
 
-  const matrix = new Map<string, PriceResult>();
-  for (const r of results) matrix.set(`${r.product_id}::${r.store}`, r);
-  const winners = chooseCheapest(results);
+  const byProductAndStore = new Map<string, PriceResult>();
+  for (const r of results) byProductAndStore.set(`${r.productId}::${r.store}`, r);
 
-  const today = new Date();
-  const todayStr = `${String(today.getDate()).padStart(2, "0")}-${String(today.getMonth() + 1).padStart(2, "0")}-${today.getFullYear()}`;
-
-  const headerCells = stores.map((store) => `<th>${escapeHtml(store)}</th>`).join("");
+  const headerCells = ALL_STORES.map((s) => `<th>${s}</th>`).join("");
 
   const rows = products
     .map((product) => {
-      const winnerList = winners[product.id] ?? [];
-      const cells = stores
-        .map((store) => {
-          const item = matrix.get(`${product.id}::${store}`);
-          const isWinner = Boolean(item && winnerList.includes(item));
-          return renderCell(item, isWinner);
-        })
-        .join("");
-      const winnerCell = winnerList.length
-        ? winnerList.map((w) => `${w.store} – €${w.normalized_price?.toFixed(2)}/${w.normalized_unit}`).join("<br>")
-        : "Sem preço confirmado";
-      return `<tr><td>${escapeHtml(product.display_name)}</td>${cells}<td>${winnerCell}</td></tr>`;
+      const rowResults = ALL_STORES.map((store) => byProductAndStore.get(`${product.id}::${store}`));
+      const cheapest = findCheapestStores(rowResults);
+
+      const cells = ALL_STORES.map((store) => {
+        const result = byProductAndStore.get(`${product.id}::${store}`);
+        const isWinner = !!result && cheapest.has(store);
+        const text = escapeHtml(cellText(result));
+        const link = result?.status === "ok" && result.url ? `<br><a href="${result.url}">link</a>` : "";
+        return `<td${isWinner ? ' style="background:#c9f2c9;font-weight:bold"' : ""}>${text}${link}</td>`;
+      }).join("");
+
+      const winnerLabel =
+        cheapest.size > 0
+          ? [...cheapest].join(", ")
+          : "Sem vencedor claro";
+
+      return `<tr><td>${escapeHtml(product.displayName)}</td>${cells}<td>${winnerLabel}</td></tr>`;
     })
     .join("");
 
-  const html = `<!doctype html><html><head><meta charset='utf-8'><style>
-body{font-family:Arial,sans-serif;color:#17233c}table{border-collapse:collapse;width:100%}th,td{border:1px solid #ddd;padding:8px;vertical-align:top}th{background:#f4f4f4}.winner{background:#dff5e3;font-weight:bold}.error{color:#9b1c1c;font-size:12px}
+  const html = `<!doctype html><html><head><meta charset="utf-8"><style>
+body{font-family:Arial,sans-serif;color:#17233c}
+table{border-collapse:collapse;width:100%}
+th,td{border:1px solid #ddd;padding:8px;vertical-align:top;font-size:14px}
+th{background:#f4f4f4}
 </style></head><body>
-<h1>Preços dos supermercados – semana de ${todayStr}</h1>
-<table><thead><tr><th>Produto</th>${headerCells}<th>Mais barato</th></tr></thead><tbody>${rows}</tbody></table></body></html>`;
+<h1>Preços dos supermercados – semana de ${weekLabel}</h1>
+<table><thead><tr><th>Produto</th>${headerCells}<th>Mais barato</th></tr></thead><tbody>${rows}</tbody></table>
+</body></html>`;
 
-  const isoDate = today.toISOString().slice(0, 10);
-  const filePath = path.join("reports", `prices-${isoDate}.html`);
+  const filePath = path.join("reports", `prices-${weekLabel}.html`);
   fs.writeFileSync(filePath, html, "utf-8");
+  return filePath;
+}
+
+export function generateCsv(products: Product[], results: PriceResult[], weekLabel: string): string {
+  fs.mkdirSync("reports", { recursive: true });
+
+  const byProductAndStore = new Map<string, PriceResult>();
+  for (const r of results) byProductAndStore.set(`${r.productId}::${r.store}`, r);
+
+  const header = ["Produto", ...ALL_STORES, "Mais barato"];
+  const lines = [header.join(";")];
+
+  for (const product of products) {
+    const rowResults = ALL_STORES.map((store) => byProductAndStore.get(`${product.id}::${store}`));
+    const cheapest = findCheapestStores(rowResults);
+    const cells = ALL_STORES.map((store) => {
+      const result = byProductAndStore.get(`${product.id}::${store}`);
+      const text = cellText(result).replace(/;/g, ",");
+      return result?.status === "ok" && result.url ? `${text} (${result.url})` : text;
+    });
+    const winnerLabel = cheapest.size > 0 ? [...cheapest].join(", ") : "Sem vencedor claro";
+    lines.push([product.displayName, ...cells, winnerLabel].join(";"));
+  }
+
+  const filePath = path.join("reports", `prices-${weekLabel}.csv`);
+  fs.writeFileSync(filePath, lines.join("\n"), "utf-8");
   return filePath;
 }

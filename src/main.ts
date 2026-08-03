@@ -1,55 +1,42 @@
 import "dotenv/config";
-import fs from "node:fs";
-import yaml from "js-yaml";
+import { chromium } from "playwright";
+import type { Page } from "playwright";
 import { DateTime } from "luxon";
-import { ProductConfigSchema } from "./models.js";
-import type { ProductConfig, PriceResult } from "./models.js";
-import { saveLatest, appendHistory } from "./history.js";
-import { generateHtml } from "./report.js";
-import { sendReport } from "./emailSender.js";
-import type { StoreConnector } from "./stores/base.js";
-import { connector as lidl } from "./stores/lidl.js";
-import { connector as aldi } from "./stores/aldi.js";
-import { connector as jumbo } from "./stores/jumbo.js";
-import { connector as albertHeijn } from "./stores/albertHeijn.js";
-import { connector as hoogvliet } from "./stores/hoogvliet.js";
-import { connector as makro } from "./stores/makro.js";
+import { PRODUCTS } from "./products.js";
+import { ACTIVE_STORES } from "./stores.js";
+import type { StoreName } from "./stores.js";
+import type { Product } from "./products.js";
+import { checkAlbertHeijn, checkJumbo, checkHoogvliet, checkLidl, checkAldi, checkMakro } from "./scraper.js";
+import type { PriceResult } from "./scraper.js";
+import { generateHtml, generateCsv } from "./report.js";
+import { sendReportEmail } from "./email.js";
 
-const STORE_CONNECTORS: Record<string, StoreConnector> = {
-  Lidl: lidl,
-  Aldi: aldi,
-  Jumbo: jumbo,
-  "Albert Heijn": albertHeijn,
-  Hoogvliet: hoogvliet,
-  Makro: makro,
+const CHECK_FUNCTIONS: Record<StoreName, (product: Product, page: Page) => Promise<PriceResult>> = {
+  "Albert Heijn": checkAlbertHeijn,
+  Jumbo: checkJumbo,
+  Hoogvliet: checkHoogvliet,
+  Lidl: checkLidl,
+  Aldi: checkAldi,
+  Makro: checkMakro,
 };
-
-function loadConfig(): { products: ProductConfig[]; stores: string[] } {
-  const productsRaw = yaml.load(fs.readFileSync("config/products.yaml", "utf-8")) as { products: unknown[] };
-  const storesRaw = yaml.load(fs.readFileSync("config/stores.yaml", "utf-8")) as { stores: { name: string }[] };
-  const products = productsRaw.products.map((p) => ProductConfigSchema.parse(p));
-  const stores = storesRaw.stores.map((s) => s.name);
-  return { products, stores };
-}
 
 function scheduledTimeIsValid(): boolean {
   const now = DateTime.now().setZone("Europe/Amsterdam");
   return now.weekday === 1 && now.hour === 8;
 }
 
-async function collect(products: ProductConfig[], stores: string[]): Promise<PriceResult[]> {
-  const results: PriceResult[] = [];
-  for (const store of stores) {
-    const connector = STORE_CONNECTORS[store];
-    if (!connector) throw new Error(`Nenhum conector configurado para a loja: ${store}`);
-    for (const product of products) {
-      const result = await connector.search(product);
-      // O relatório casa resultados pelo nome de exibição em stores.yaml,
-      // não pelo slug interno do conector — normaliza aqui para nunca dessincronizar.
-      results.push({ ...result, store });
-    }
-  }
-  return results;
+function weekLabel(): string {
+  return DateTime.now().setZone("Europe/Amsterdam").toFormat("dd-MM-yyyy");
+}
+
+function formatResult(result: PriceResult): string {
+  if (result.status === "not_found") return "Não encontrado";
+  if (result.status === "manual_check_needed") return "Verificação manual necessária";
+  const parts = [`€${result.price?.toFixed(2) ?? "?"}`];
+  if (result.quantity) parts.push(result.quantity);
+  if (result.pricePerUnit) parts.push(result.pricePerUnit);
+  if (result.promotion) parts.push(`promo: ${result.promotion}`);
+  return parts.join(" | ");
 }
 
 async function run(manual: boolean, sendEmail: boolean): Promise<void> {
@@ -57,14 +44,33 @@ async function run(manual: boolean, sendEmail: boolean): Promise<void> {
     console.log("Execução ignorada: fora de segunda-feira às 08:00 Europe/Amsterdam.");
     return;
   }
-  const { products, stores } = loadConfig();
-  const results = await collect(products, stores);
-  saveLatest(results);
-  appendHistory(results);
-  const reportPath = generateHtml(results, products, stores);
-  console.log(`Relatório criado: ${reportPath}`);
+
+  const browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage();
+  const results: PriceResult[] = [];
+
+  try {
+    for (const product of PRODUCTS) {
+      for (const store of ACTIVE_STORES) {
+        const check = CHECK_FUNCTIONS[store];
+        console.log(`Consultando ${store} - ${product.displayName}...`);
+        const result = await check(product, page);
+        results.push(result);
+        console.log(`  -> ${formatResult(result)}`);
+      }
+    }
+  } finally {
+    await browser.close();
+  }
+
+  const label = weekLabel();
+  const htmlPath = generateHtml(PRODUCTS, results, label);
+  const csvPath = generateCsv(PRODUCTS, results, label);
+  console.log(`Relatório HTML: ${htmlPath}`);
+  console.log(`Relatório CSV: ${csvPath}`);
+
   if (sendEmail) {
-    await sendReport(reportPath);
+    await sendReportEmail(htmlPath, label);
     console.log("E-mail enviado.");
   }
 }
