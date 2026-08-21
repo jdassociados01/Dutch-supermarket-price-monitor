@@ -1,8 +1,12 @@
 name: Weekly supermarket price check
 on:
   schedule:
+    # Segunda-feira 08:00 Europe/Amsterdam (CET=UTC+1 / CEST=UTC+2)
     - cron: '0 6 * * 1'
     - cron: '0 7 * * 1'
+    # Sexta-feira 15:00 Europe/Amsterdam
+    - cron: '0 13 * * 5'
+    - cron: '0 14 * * 5'
   workflow_dispatch:
 jobs:
   collect:
@@ -19,6 +23,7 @@ jobs:
       - name: Run scheduled collection
         if: github.event_name == 'schedule'
         env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
@@ -26,9 +31,10 @@ jobs:
           SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
         run: npm start -- --send-email
-      - name: Run manually
+      - name: Run manually (button in the Actions tab)
         if: github.event_name == 'workflow_dispatch'
         env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
           SMTP_HOST: ${{ secrets.SMTP_HOST }}

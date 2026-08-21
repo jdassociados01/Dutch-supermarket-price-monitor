@@ -9,13 +9,13 @@ function escapeHtml(text: string): string {
 }
 
 /** Extrai um valor numérico de "€1,16 per stuk" / "€6,65 per kilo", quando existir. */
-function perUnitValue(result: PriceResult): number | null {
+export function perUnitValue(result: PriceResult): number | null {
   if (result.status !== "ok" || !result.pricePerUnit) return null;
   const match = /([\d.,]+)\s*(?:per|\/)\s*(kilo|kg|stuk)/i.exec(result.pricePerUnit);
   return match ? Number(match[1]!.replace(",", ".")) : null;
 }
 
-function cellText(result: PriceResult | undefined): string {
+export function cellText(result: PriceResult | undefined): string {
   if (!result) return "";
   if (result.status === "not_found") return "Não encontrado";
   if (result.status === "manual_check_needed") return "Verificação manual necessária";
@@ -28,7 +28,7 @@ function cellText(result: PriceResult | undefined): string {
   return parts.join(" — ") || "Não encontrado";
 }
 
-function findCheapestStores(rowResults: (PriceResult | undefined)[]): Set<string> {
+export function findCheapestStores(rowResults: (PriceResult | undefined)[]): Set<string> {
   const withValue = rowResults.filter((r): r is PriceResult => !!r && perUnitValue(r) !== null);
   if (withValue.length === 0) return new Set();
   const min = Math.min(...withValue.map((r) => perUnitValue(r)!));
