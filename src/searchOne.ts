@@ -5,6 +5,7 @@ import { CHECK_FUNCTIONS } from "./scraper.js";
 import type { PriceResult } from "./scraper.js";
 import type { Product } from "./products.js";
 import { readSearchQuery, writeSearchResults } from "./sheets.js";
+import { sendSearchDoneEmail } from "./email.js";
 
 function formatResult(result: PriceResult): string {
   if (result.status === "not_found") return "Não encontrado";
@@ -55,6 +56,13 @@ async function run(): Promise<void> {
   console.log("Escrevendo resultado na aba 'Buscar Produto'...");
   await writeSearchResults(productName, results);
   console.log("Planilha atualizada.");
+
+  try {
+    await sendSearchDoneEmail(productName, results);
+    console.log("E-mail de aviso enviado.");
+  } catch (err) {
+    console.log(`Aviso: não consegui enviar o e-mail (${(err as Error).message}). A planilha já foi atualizada de qualquer forma.`);
+  }
 }
 
 run().catch((err: unknown) => {
