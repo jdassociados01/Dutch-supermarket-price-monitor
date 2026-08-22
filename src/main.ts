@@ -5,7 +5,7 @@ import { DateTime } from "luxon";
 import { ACTIVE_STORES } from "./stores.js";
 import type { StoreName } from "./stores.js";
 import type { Product } from "./products.js";
-import { checkAlbertHeijn, checkJumbo, checkHoogvliet, checkLidl, checkAldi, checkMakro } from "./scraper.js";
+import { checkAlbertHeijn, checkJumbo, checkHoogvliet, checkAldi, checkMakro } from "./scraper.js";
 import type { PriceResult } from "./scraper.js";
 import { generateHtml, generateCsv } from "./report.js";
 import { sendReportEmail } from "./email.js";
@@ -15,7 +15,6 @@ const CHECK_FUNCTIONS: Record<StoreName, (product: Product, page: Page) => Promi
   "Albert Heijn": checkAlbertHeijn,
   Jumbo: checkJumbo,
   Hoogvliet: checkHoogvliet,
-  Lidl: checkLidl,
   Aldi: checkAldi,
   Makro: checkMakro,
 };

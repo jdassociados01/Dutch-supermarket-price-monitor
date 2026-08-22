@@ -8,11 +8,19 @@ function escapeHtml(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-/** Extrai um valor numérico de "€1,16 per stuk" / "€6,65 per kilo", quando existir. */
-export function perUnitValue(result: PriceResult): number | null {
+export interface UnitValue {
+  value: number;
+  unit: "kg" | "unit";
+}
+
+/** Extrai um valor numérico E a unidade de "€1,16 per stuk" / "€6,65 per kilo".
+ * Nunca compara €/kg com €/unidade — são coisas diferentes. */
+export function perUnitValue(result: PriceResult): UnitValue | null {
   if (result.status !== "ok" || !result.pricePerUnit) return null;
   const match = /([\d.,]+)\s*(?:per|\/)\s*(kilo|kg|stuk)/i.exec(result.pricePerUnit);
-  return match ? Number(match[1]!.replace(",", ".")) : null;
+  if (!match) return null;
+  const unit = /stuk/i.test(match[2]!) ? "unit" : "kg";
+  return { value: Number(match[1]!.replace(",", ".")), unit };
 }
 
 export function cellText(result: PriceResult | undefined): string {
@@ -28,11 +36,21 @@ export function cellText(result: PriceResult | undefined): string {
   return parts.join(" — ") || "Não encontrado";
 }
 
-export function findCheapestStores(rowResults: (PriceResult | undefined)[]): Set<string> {
-  const withValue = rowResults.filter((r): r is PriceResult => !!r && perUnitValue(r) !== null);
+/**
+ * Só compara preços dentro da mesma unidade (kg com kg, unidade com
+ * unidade) — nunca "€0,40 por banana" contra "€1,39 por kg", por exemplo.
+ * Quando os resultados disponíveis usam unidades diferentes entre si e o
+ * produto não deixa claro qual usar, não declara vencedor.
+ */
+export function findCheapestStores(rowResults: (PriceResult | undefined)[], comparisonUnit: "kg" | "unit"): Set<string> {
+  const withValue = rowResults
+    .filter((r): r is PriceResult => !!r)
+    .map((r) => ({ result: r, unitValue: perUnitValue(r) }))
+    .filter((x): x is { result: PriceResult; unitValue: UnitValue } => x.unitValue !== null && x.unitValue.unit === comparisonUnit);
+
   if (withValue.length === 0) return new Set();
-  const min = Math.min(...withValue.map((r) => perUnitValue(r)!));
-  return new Set(withValue.filter((r) => perUnitValue(r) === min).map((r) => r.store));
+  const min = Math.min(...withValue.map((x) => x.unitValue.value));
+  return new Set(withValue.filter((x) => x.unitValue.value === min).map((x) => x.result.store));
 }
 
 export function generateHtml(products: Product[], results: PriceResult[], weekLabel: string): string {
@@ -46,7 +64,7 @@ export function generateHtml(products: Product[], results: PriceResult[], weekLa
   const rows = products
     .map((product) => {
       const rowResults = ALL_STORES.map((store) => byProductAndStore.get(`${product.id}::${store}`));
-      const cheapest = findCheapestStores(rowResults);
+      const cheapest = findCheapestStores(rowResults, product.comparisonUnit);
 
       const cells = ALL_STORES.map((store) => {
         const result = byProductAndStore.get(`${product.id}::${store}`);
@@ -91,7 +109,7 @@ export function generateCsv(products: Product[], results: PriceResult[], weekLab
 
   for (const product of products) {
     const rowResults = ALL_STORES.map((store) => byProductAndStore.get(`${product.id}::${store}`));
-    const cheapest = findCheapestStores(rowResults);
+    const cheapest = findCheapestStores(rowResults, product.comparisonUnit);
     const cells = ALL_STORES.map((store) => {
       const result = byProductAndStore.get(`${product.id}::${store}`);
       const text = cellText(result).replace(/;/g, ",");

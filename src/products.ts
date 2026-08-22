@@ -29,7 +29,9 @@ export const PRODUCTS: Product[] = [
   { id: "avocado", displayName: "Avocado", searchTerms: ["avocado", "avocado's"], comparisonUnit: "unit" },
   { id: "kipfilet", displayName: "Kipfilet", searchTerms: ["kipfilet"], comparisonUnit: "kg" },
   { id: "rundergehakt", displayName: "Rundergehakt", searchTerms: ["rundergehakt"], comparisonUnit: "kg" },
-  { id: "paprika", displayName: "Paprika", searchTerms: ["paprika", "rode paprika", "paprika mix"], comparisonUnit: "kg" },
+  // Vendida por peça em quase todas as lojas (AH, Jumbo, Hoogvliet, Makro) —
+  // só a Aldi às vezes mostra uma opção solta por kg.
+  { id: "paprika", displayName: "Paprika", searchTerms: ["paprika", "rode paprika", "paprika mix"], comparisonUnit: "unit" },
   { id: "tomaat", displayName: "Tomaat", searchTerms: ["tomaat", "tomaten"], comparisonUnit: "kg" },
   {
     id: "volkoren_tostibrood",

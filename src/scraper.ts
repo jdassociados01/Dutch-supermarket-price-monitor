@@ -223,18 +223,10 @@ export async function checkHoogvliet(product: Product, page: Page): Promise<Pric
 }
 
 // ---------------------------------------------------------------------------
-// Lidl
-// Investigado nesta sessão: a busca em lidl.nl não retorna produtos reais
-// para mercearia fresca (ex.: "banaan", "kipfilet" só trazem sugestões de
-// categoria, 0 produtos de verdade) — o site não parece ter um catálogo
-// completo de supermercado pesquisável. O folder semanal existe, mas é uma
-// revista em imagens (page-01.png, page-02.png...), sem texto extraível, e
-// não vamos fazer OCR. Sem fonte confiável, sempre verificação manual.
-// ---------------------------------------------------------------------------
-export async function checkLidl(product: Product, _page: Page): Promise<PriceResult> {
-  return manualCheckNeeded("Lidl", product);
-}
-
+// Lidl foi removida (ver stores.ts): a busca em lidl.nl encontra produtos de
+// verdade (ex.: 48 resultados reais para "kipfilet"), mas a grade de preços
+// nunca sai do estado de carregamento — testado várias vezes, mesmo com
+// navegação real e espera. Sem fonte confiável, não há conector aqui.
 // ---------------------------------------------------------------------------
 // Aldi
 // Testado nesta sessão com Playwright real: funciona, sem bloqueio de bot.
