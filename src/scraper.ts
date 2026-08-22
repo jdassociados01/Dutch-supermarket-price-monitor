@@ -319,3 +319,166 @@ export async function checkAldi(product: Product, page: Page): Promise<PriceResu
 export async function checkMakro(product: Product, _page: Page): Promise<PriceResult> {
   return manualCheckNeeded("Makro", product);
 }
+
+// ---------------------------------------------------------------------------
+// Etos, Kruidvat, Hema — drogaria/bazar, não supermercado. Usados só na busca
+// avulsa de um produto (aba "Buscar Produto"), não na lista semanal de
+// mercearia: nenhum dos três vende fruta/legume/carne/queijo frescos
+// (testado nesta sessão — "appel" só retorna torta/suco/vinagre de maçã,
+// "kipfilet" não existe na Etos). Úteis pra produtos de beleza/casa/farmácia
+// que o usuário adicionar na busca avulsa.
+// ---------------------------------------------------------------------------
+
+// Etos: confirmado nesta sessão que bloqueia (mesmo grupo Ahold Delhaize da
+// Albert Heijn, mesmo padrão de erro "Oeps! We kunnen Etos.nl niet bereiken").
+// A detecção de bloqueio é real; o parsing abaixo não foi exercitado com
+// resultado de verdade (só vi uma busca sem resultados antes do bloqueio) —
+// mesma ressalva da Albert Heijn: trate como não verificado.
+export async function checkEtos(product: Product, page: Page): Promise<PriceResult> {
+  const term = encodeURIComponent(product.searchTerms[0]!);
+  const url = `https://www.etos.nl/search?q=${term}`;
+
+  let response;
+  try {
+    response = await page.goto(url, { timeout: NAV_TIMEOUT_MS, waitUntil: "domcontentloaded" });
+  } catch {
+    return manualCheckNeeded("Etos", product);
+  }
+  if (!response || response.status() >= 400) {
+    return manualCheckNeeded("Etos", product);
+  }
+
+  const bodyText = await page.locator("body").innerText().catch(() => "");
+  if (/we kunnen etos\.nl/i.test(bodyText)) {
+    return manualCheckNeeded("Etos", product);
+  }
+  if (/geen resultaten voor/i.test(bodyText)) {
+    return notFound("Etos", product);
+  }
+
+  const cards = page.locator('[class*="product-tile"], [class*="product-grid"] li');
+  const count = await cards.count();
+  for (let i = 0; i < count; i++) {
+    const card = cards.nth(i);
+    const name = (await card.innerText().catch(() => "")).split("\n")[0]?.trim() ?? "";
+    if (!name || !matchesSearchTerm(name, product)) continue;
+
+    const text = (await card.innerText().catch(() => "")).replace(/\s+/g, " ");
+    const priceMatch = /€\s*([\d.,]+)/.exec(text);
+    const href = await card.locator("a").first().getAttribute("href").catch(() => null);
+
+    return {
+      store: "Etos",
+      productId: product.id,
+      displayName: product.displayName,
+      status: "ok",
+      price: parseEuro(priceMatch?.[0]),
+      quantity: null,
+      pricePerUnit: null,
+      promotion: /1\s*\+\s*1\s*gratis/i.test(text) ? "1+1 gratis" : null,
+      url: href ? new URL(href, "https://www.etos.nl").toString() : url,
+    };
+  }
+  return notFound("Etos", product);
+}
+
+// Kruidvat: testado nesta sessão com Playwright real, sem bloqueio de bot.
+// Estrutura confirmada: cards `.product-list-item`.
+export async function checkKruidvat(product: Product, page: Page): Promise<PriceResult> {
+  const term = encodeURIComponent(product.searchTerms[0]!);
+  const url = `https://www.kruidvat.nl/search/${term}`;
+
+  let response;
+  try {
+    response = await page.goto(url, { timeout: NAV_TIMEOUT_MS, waitUntil: "domcontentloaded" });
+  } catch {
+    return manualCheckNeeded("Kruidvat", product);
+  }
+  if (!response || response.status() >= 400) {
+    return manualCheckNeeded("Kruidvat", product);
+  }
+
+  const cards = page.locator(".product-list-item");
+  const count = await cards.count();
+  for (let i = 0; i < count; i++) {
+    const card = cards.nth(i);
+    const name = (await card.locator(".product-list-item__name").innerText().catch(() => "")).trim();
+    if (!name || !matchesSearchTerm(name, product)) continue;
+
+    const priceText = await card.locator(".product-list-item__price").first().innerText().catch(() => "");
+    const quantityText = await card.locator(".product-list-item__short-description").innerText().catch(() => "");
+    const promoText = await card.locator(".promotion-roundel").innerText().catch(() => "");
+    const href = await card.locator("a.product-list-item__link").first().getAttribute("href").catch(() => null);
+
+    return {
+      store: "Kruidvat",
+      productId: product.id,
+      displayName: product.displayName,
+      status: "ok",
+      price: parseEuro(priceText),
+      quantity: quantityText.trim() || null,
+      pricePerUnit: null,
+      promotion: promoText.trim() || null,
+      url: href ? new URL(href, "https://www.kruidvat.nl").toString() : url,
+    };
+  }
+  return notFound("Kruidvat", product);
+}
+
+// Hema: testado nesta sessão com Playwright real, sem bloqueio de bot.
+// Estrutura confirmada: cards `.js-product-tile`, com preço por unidade já
+// calculado em `.price-per-item-info` quando aplicável.
+export async function checkHema(product: Product, page: Page): Promise<PriceResult> {
+  const term = encodeURIComponent(product.searchTerms[0]!);
+  const url = `https://www.hema.nl/search?lang=nl_NL&q=${term}`;
+
+  let response;
+  try {
+    response = await page.goto(url, { timeout: NAV_TIMEOUT_MS, waitUntil: "domcontentloaded" });
+  } catch {
+    return manualCheckNeeded("Hema", product);
+  }
+  if (!response || response.status() >= 400) {
+    return manualCheckNeeded("Hema", product);
+  }
+
+  const cards = page.locator(".js-product-tile");
+  const count = await cards.count();
+  for (let i = 0; i < count; i++) {
+    const card = cards.nth(i);
+    const name = (await card.locator(".js-product-link").first().innerText().catch(() => "")).trim();
+    if (!name || !matchesSearchTerm(name, product)) continue;
+
+    const priceText = await card.locator(".price.discounted, .product-price .price").first().innerText().catch(() => "");
+    const perUnitText = await card.locator(".price-per-item-info").innerText().catch(() => "");
+    const href = await card.locator(".js-product-link").first().getAttribute("href").catch(() => null);
+
+    return {
+      store: "Hema",
+      productId: product.id,
+      displayName: product.displayName,
+      status: "ok",
+      price: parseEuro(priceText),
+      quantity: null,
+      pricePerUnit: perUnitText.trim() || null,
+      promotion: null,
+      url: href ? new URL(href, "https://www.hema.nl").toString() : url,
+    };
+  }
+  return notFound("Hema", product);
+}
+
+export type CheckFunction = (product: Product, page: Page) => Promise<PriceResult>;
+
+/** Todas as 8 lojas conhecidas. A rotina semanal só usa GROCERY_STORES (ver
+ * stores.ts); a busca avulsa de um produto usa o mapa inteiro. */
+export const CHECK_FUNCTIONS: Record<StoreName, CheckFunction> = {
+  "Albert Heijn": checkAlbertHeijn,
+  Jumbo: checkJumbo,
+  Hoogvliet: checkHoogvliet,
+  Aldi: checkAldi,
+  Makro: checkMakro,
+  Etos: checkEtos,
+  Kruidvat: checkKruidvat,
+  Hema: checkHema,
+};

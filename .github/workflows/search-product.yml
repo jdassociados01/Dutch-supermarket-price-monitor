@@ -1,0 +1,23 @@
+name: Search single product
+on:
+  workflow_dispatch:
+    inputs:
+      product:
+        description: 'Nome do produto (opcional — se vazio, lê a célula B2 da aba "Buscar Produto")'
+        required: false
+jobs:
+  search:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npx playwright install --with-deps chromium
+      - name: Buscar produto
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: npm run search-product -- "${{ inputs.product }}"

@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { ALL_STORES } from "./stores.js";
+import { GROCERY_STORES } from "./stores.js";
 import type { PriceResult } from "./scraper.js";
 import type { Product } from "./products.js";
 
@@ -120,14 +120,14 @@ export function generateHtml(products: Product[], results: PriceResult[], weekLa
   const byProductAndStore = new Map<string, PriceResult>();
   for (const r of results) byProductAndStore.set(`${r.productId}::${r.store}`, r);
 
-  const headerCells = ALL_STORES.map((s) => `<th>${s}</th>`).join("");
+  const headerCells = GROCERY_STORES.map((s) => `<th>${s}</th>`).join("");
 
   const rows = products
     .map((product) => {
-      const rowResults = ALL_STORES.map((store) => byProductAndStore.get(`${product.id}::${store}`));
+      const rowResults = GROCERY_STORES.map((store) => byProductAndStore.get(`${product.id}::${store}`));
       const cheapest = findCheapestStores(rowResults, product.comparisonUnit);
 
-      const cells = ALL_STORES.map((store) => {
+      const cells = GROCERY_STORES.map((store) => {
         const result = byProductAndStore.get(`${product.id}::${store}`);
         const isWinner = !!result && cheapest.has(store);
         const text = escapeHtml(cellText(result));
@@ -165,13 +165,13 @@ export function generateCsv(products: Product[], results: PriceResult[], weekLab
   const byProductAndStore = new Map<string, PriceResult>();
   for (const r of results) byProductAndStore.set(`${r.productId}::${r.store}`, r);
 
-  const header = ["Produto", ...ALL_STORES, "Mais barato"];
+  const header = ["Produto", ...GROCERY_STORES, "Mais barato"];
   const lines = [header.join(";")];
 
   for (const product of products) {
-    const rowResults = ALL_STORES.map((store) => byProductAndStore.get(`${product.id}::${store}`));
+    const rowResults = GROCERY_STORES.map((store) => byProductAndStore.get(`${product.id}::${store}`));
     const cheapest = findCheapestStores(rowResults, product.comparisonUnit);
-    const cells = ALL_STORES.map((store) => {
+    const cells = GROCERY_STORES.map((store) => {
       const result = byProductAndStore.get(`${product.id}::${store}`);
       const text = cellText(result).replace(/;/g, ",");
       return result?.status === "ok" && result.url ? `${text} (${result.url})` : text;

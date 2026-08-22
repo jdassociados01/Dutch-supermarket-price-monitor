@@ -1,23 +1,12 @@
 import "dotenv/config";
 import { chromium } from "playwright";
-import type { Page } from "playwright";
 import { DateTime } from "luxon";
 import { ACTIVE_STORES } from "./stores.js";
-import type { StoreName } from "./stores.js";
-import type { Product } from "./products.js";
-import { checkAlbertHeijn, checkJumbo, checkHoogvliet, checkAldi, checkMakro } from "./scraper.js";
+import { CHECK_FUNCTIONS } from "./scraper.js";
 import type { PriceResult } from "./scraper.js";
 import { generateHtml, generateCsv } from "./report.js";
 import { sendReportEmail } from "./email.js";
 import { loadSheetProducts, writeResultsToSheet } from "./sheets.js";
-
-const CHECK_FUNCTIONS: Record<StoreName, (product: Product, page: Page) => Promise<PriceResult>> = {
-  "Albert Heijn": checkAlbertHeijn,
-  Jumbo: checkJumbo,
-  Hoogvliet: checkHoogvliet,
-  Aldi: checkAldi,
-  Makro: checkMakro,
-};
 
 // Roda toda segunda de manhã (verificação semanal completa) e toda
 // sexta à tarde (para a lista de compras do fim de semana).

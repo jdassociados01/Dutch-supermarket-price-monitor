@@ -3,7 +3,7 @@ import path from "node:path";
 import { google } from "googleapis";
 import { PRODUCTS } from "./products.js";
 import type { Product } from "./products.js";
-import { ALL_STORES } from "./stores.js";
+import { GROCERY_STORES } from "./stores.js";
 import type { StoreName } from "./stores.js";
 import type { PriceResult } from "./scraper.js";
 import { cellText, findCheapestStores } from "./report.js";
@@ -151,7 +151,7 @@ export async function loadSheetProducts(): Promise<SheetInfo> {
   let cheapestColumn = -1;
   header.forEach((cell: string, colIndex: number) => {
     const norm = normalize(cell ?? "").replace(/[^a-z]/g, "");
-    const store = ALL_STORES.find((s) => normalize(s).replace(/[^a-z]/g, "") === norm);
+    const store = GROCERY_STORES.find((s) => normalize(s).replace(/[^a-z]/g, "") === norm);
     if (store) storeColumns[store] = colIndex;
     if (norm === "maisbarato") cheapestColumn = colIndex;
   });
@@ -162,7 +162,7 @@ export async function loadSheetProducts(): Promise<SheetInfo> {
     if (!rawName) continue;
     const rowNumber = i + 1;
     const existingValues: Partial<Record<StoreName, string>> = {};
-    for (const store of ALL_STORES) {
+    for (const store of GROCERY_STORES) {
       const colIndex = storeColumns[store];
       if (colIndex === undefined) continue;
       const value = rows[i]?.[colIndex];
@@ -214,7 +214,7 @@ function parsePreservedCell(store: StoreName, text: string | undefined): PriceRe
 // ---------------------------------------------------------------------------
 
 function countCheapestByStore(rows: SheetProductRow[], rowResultsByRow: Map<number, (PriceResult | undefined)[]>): Map<StoreName, number> {
-  const counts = new Map<StoreName, number>(ALL_STORES.map((s) => [s, 0]));
+  const counts = new Map<StoreName, number>(GROCERY_STORES.map((s) => [s, 0]));
   for (const row of rows) {
     const rowResults = rowResultsByRow.get(row.rowNumber) ?? [];
     const cheapest = findCheapestStores(rowResults, row.product.comparisonUnit);
@@ -238,7 +238,7 @@ export async function writeResultsToSheet(sheetInfo: SheetInfo, results: PriceRe
   const rowResultsByRow = new Map<number, (PriceResult | undefined)[]>();
 
   for (const row of sheetInfo.rows) {
-    const rowResults = ALL_STORES.map((store) => {
+    const rowResults = GROCERY_STORES.map((store) => {
       const fresh = byProductAndStore.get(`${row.product.id}::${store}`);
       // Se o valor da planilha vai ser preservado (não sobrescrito), usa esse
       // valor preservado na comparação de mais barato também — senão a coluna
@@ -250,7 +250,7 @@ export async function writeResultsToSheet(sheetInfo: SheetInfo, results: PriceRe
     });
     rowResultsByRow.set(row.rowNumber, rowResults);
 
-    for (const store of ALL_STORES) {
+    for (const store of GROCERY_STORES) {
       const colIndex = sheetInfo.storeColumns[store];
       if (colIndex === undefined) continue;
       const result = byProductAndStore.get(`${row.product.id}::${store}`);
@@ -287,6 +287,47 @@ export async function writeResultsToSheet(sheetInfo: SheetInfo, results: PriceRe
   });
 
   if (data.length === 0) return;
+
+  await sheetsClient.spreadsheets.values.batchUpdate({
+    spreadsheetId: SPREADSHEET_ID,
+    requestBody: { valueInputOption: "USER_ENTERED", data },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Aba "Buscar Produto": pesquisa avulsa de um único produto em todas as 8
+// lojas (mercearia + Etos/Kruidvat/Hema), disparada pelo botão da planilha.
+// ---------------------------------------------------------------------------
+
+const SEARCH_TAB = "Buscar Produto";
+const SEARCH_QUERY_CELL = `'${SEARCH_TAB}'!B2`;
+const SEARCH_RESULTS_START_ROW = 5;
+const SEARCH_RESULTS_CLEAR_ROWS = 30;
+
+export async function readSearchQuery(): Promise<string | null> {
+  const sheetsClient = await getSheetsClient();
+  const res = await sheetsClient.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: SEARCH_QUERY_CELL });
+  const value = res.data.values?.[0]?.[0];
+  return value ? String(value).trim() : null;
+}
+
+export async function writeSearchResults(productName: string, results: PriceResult[]): Promise<void> {
+  const sheetsClient = await getSheetsClient();
+
+  await sheetsClient.spreadsheets.values.clear({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `'${SEARCH_TAB}'!A${SEARCH_RESULTS_START_ROW}:C${SEARCH_RESULTS_START_ROW + SEARCH_RESULTS_CLEAR_ROWS}`,
+  });
+
+  const data: { range: string; values: string[][] }[] = [
+    { range: `'${SEARCH_TAB}'!D1`, values: [[`Última busca: "${productName}" — ${new Date().toLocaleString("pt-BR", { timeZone: "Europe/Amsterdam" })}`]] },
+  ];
+
+  results.forEach((result, i) => {
+    const row = SEARCH_RESULTS_START_ROW + i;
+    const link = result.status === "ok" && result.url ? result.url : "";
+    data.push({ range: `'${SEARCH_TAB}'!A${row}`, values: [[result.store, cellText(result), link]] });
+  });
 
   await sheetsClient.spreadsheets.values.batchUpdate({
     spreadsheetId: SPREADSHEET_ID,
