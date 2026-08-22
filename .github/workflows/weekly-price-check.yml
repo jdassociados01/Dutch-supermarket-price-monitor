@@ -19,7 +19,7 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - run: npm run typecheck
-      - run: npx playwright install --with-deps chromium
+      - run: npx playwright install --with-deps chrome
       - name: Run scheduled collection
         if: github.event_name == 'schedule'
         env:

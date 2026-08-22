@@ -36,7 +36,7 @@ async function run(): Promise<void> {
 
   console.log(`Buscando "${productName}" em ${ALL_STORES.length} lojas...`);
 
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ headless: true, channel: "chrome" });
   const page = await browser.newPage();
   const results: PriceResult[] = [];
 

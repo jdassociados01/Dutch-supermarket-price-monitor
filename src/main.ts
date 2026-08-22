@@ -42,7 +42,9 @@ async function run(manual: boolean, sendEmail: boolean): Promise<void> {
   const products = sheetInfo.rows.map((r) => r.product);
   console.log(`${products.length} produtos encontrados na planilha.`);
 
-  const browser = await chromium.launch({ headless: true });
+  // Chrome de verdade, não o Chromium de testes do Playwright — a Hoogvliet
+  // só deixa passar com o binário real (ver scraper.ts).
+  const browser = await chromium.launch({ headless: true, channel: "chrome" });
   const page = await browser.newPage();
   const results: PriceResult[] = [];
 

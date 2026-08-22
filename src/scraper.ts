@@ -171,23 +171,35 @@ export async function checkJumbo(product: Product, page: Page): Promise<PriceRes
 
 // ---------------------------------------------------------------------------
 // Hoogvliet
-// Confirmado nesta sessão: a Hoogvliet usa Incapsula (Imperva) e bloqueia
-// (HTTP 403) o acesso automatizado via Playwright, mesmo com browser real.
-// A URL de busca abaixo foi confirmada real (navegação manual). O parsing
-// segue a estrutura real observada, mas não verificado de ponta a ponta
-// por causa do bloqueio — mesma ressalva da Albert Heijn.
+// A Hoogvliet usa Incapsula (Imperva). Ir direto na URL de busca (mesmo com
+// browser real) trazia uma página 200 com a busca esvaziada ("0 producten
+// found"), mesmo pra termos que existem. Confirmado nesta sessão: usando o
+// Chrome de verdade (não o Chromium de testes do Playwright) E navegando
+// como um usuário real navegaria — abrindo a home, fechando o aviso de
+// cookies, digitando na caixa de busca — os resultados de verdade aparecem.
+// Nada aqui contorna bloqueio nenhum; é só imitar o caminho normal de uso.
 // ---------------------------------------------------------------------------
 export async function checkHoogvliet(product: Product, page: Page): Promise<PriceResult> {
-  const term = encodeURIComponent(product.searchTerms[0]!);
-  const url = `https://www.hoogvliet.com/INTERSHOP/web/WFS/org-webshop-Site/nl_NL/-/EUR/ViewTWParametricSearch-SimpleOfferSearch?SearchTerm=${term}&SelectedSearchResult=SFProductSearch`;
+  const term = product.searchTerms[0]!;
+  const fallbackUrl = `https://www.hoogvliet.com/INTERSHOP/web/WFS/org-webshop-Site/nl_NL/-/EUR/ViewTWParametricSearch-SimpleOfferSearch?SearchTerm=${encodeURIComponent(term)}&SelectedSearchResult=SFProductSearch`;
 
-  let response;
   try {
-    response = await page.goto(url, { timeout: NAV_TIMEOUT_MS, waitUntil: "domcontentloaded" });
+    await page.goto("https://www.hoogvliet.com/", { timeout: NAV_TIMEOUT_MS, waitUntil: "domcontentloaded" });
   } catch {
     return manualCheckNeeded("Hoogvliet", product);
   }
-  if (!response || response.status() >= 400) {
+
+  const rejectButton = page.locator("text=Afwijzen").first();
+  if (await rejectButton.count().catch(() => 0)) {
+    await rejectButton.click({ timeout: 3000 }).catch(() => {});
+  }
+
+  const searchBox = page.locator('input[placeholder="Waar ben je naar op zoek?"]').first();
+  try {
+    await searchBox.fill(term, { timeout: 8000 });
+    await searchBox.press("Enter");
+    await page.waitForTimeout(2000);
+  } catch {
     return manualCheckNeeded("Hoogvliet", product);
   }
 
@@ -211,15 +223,10 @@ export async function checkHoogvliet(product: Product, page: Page): Promise<Pric
       quantity: quantityText.trim() || null,
       pricePerUnit: null,
       promotion: null,
-      url: href ?? url,
+      url: href ? new URL(href, "https://www.hoogvliet.com").toString() : fallbackUrl,
     };
   }
-  // Confirmado nesta sessão: a Incapsula às vezes deixa passar uma página real
-  // (200, HTML completo) mas com a busca esvaziada ("0 producten found"),
-  // mesmo para termos que certamente existem no catálogo (ex.: "appel"). Como
-  // não dá para distinguir isso de um "não encontrado" de verdade, tratamos
-  // como bloqueio em vez de arriscar um falso "não encontrado".
-  return manualCheckNeeded("Hoogvliet", product);
+  return notFound("Hoogvliet", product);
 }
 
 // ---------------------------------------------------------------------------
