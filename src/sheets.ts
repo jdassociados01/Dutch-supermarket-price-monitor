@@ -316,7 +316,7 @@ export async function writeSearchResults(productName: string, results: PriceResu
 
   await sheetsClient.spreadsheets.values.clear({
     spreadsheetId: SPREADSHEET_ID,
-    range: `'${SEARCH_TAB}'!A${SEARCH_RESULTS_START_ROW}:C${SEARCH_RESULTS_START_ROW + SEARCH_RESULTS_CLEAR_ROWS}`,
+    range: `'${SEARCH_TAB}'!A${SEARCH_RESULTS_START_ROW}:B${SEARCH_RESULTS_START_ROW + SEARCH_RESULTS_CLEAR_ROWS}`,
   });
 
   const data: { range: string; values: string[][] }[] = [
@@ -325,8 +325,7 @@ export async function writeSearchResults(productName: string, results: PriceResu
 
   results.forEach((result, i) => {
     const row = SEARCH_RESULTS_START_ROW + i;
-    const link = result.status === "ok" && result.url ? result.url : "";
-    data.push({ range: `'${SEARCH_TAB}'!A${row}`, values: [[result.store, cellText(result), link]] });
+    data.push({ range: `'${SEARCH_TAB}'!A${row}`, values: [[result.store, cellText(result)]] });
   });
 
   await sheetsClient.spreadsheets.values.batchUpdate({
