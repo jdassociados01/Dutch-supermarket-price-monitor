@@ -6,7 +6,7 @@ import type { Product } from "./products.js";
 import { ALL_STORES } from "./stores.js";
 import type { StoreName } from "./stores.js";
 import type { PriceResult } from "./scraper.js";
-import { cellText, findCheapestStores, perUnitValue } from "./report.js";
+import { cellText, findCheapestStores } from "./report.js";
 
 const SPREADSHEET_ID = process.env.GOOGLE_SHEET_ID ?? "1xbN1irwkvAcVgGmn-k4mi0wRZMuNtoECn3ljULrv_Z0";
 const SHEET_TAB = "Lista de Compras Semanais";
@@ -208,97 +208,26 @@ function parsePreservedCell(store: StoreName, text: string | undefined): PriceRe
 }
 
 // ---------------------------------------------------------------------------
-// Plano de compra: em quais lojas (no máximo `maxStores`) comprar cada
-// produto, minimizando o número de lojas visitadas. Testa todas as
-// combinações de 1 e 2 lojas (poucas o bastante pra força bruta) e escolhe a
-// que cobre mais produtos; empate é resolvido pelo menor custo total.
+// Resumo por mercado: quantos produtos cada loja tem como a mais barata.
+// Cada loja aparece uma única vez; só soma quando ela realmente é (ou
+// empata como) a mais barata daquele produto específico.
 // ---------------------------------------------------------------------------
 
-const MAX_STORES_TO_VISIT = 2;
-
-function storeCombinations(stores: readonly StoreName[], size: number): StoreName[][] {
-  if (size === 0) return [[]];
-  if (stores.length < size) return [];
-  const [first, ...rest] = stores;
-  const withFirst = storeCombinations(rest, size - 1).map((combo) => [first!, ...combo]);
-  const withoutFirst = storeCombinations(rest, size);
-  return [...withFirst, ...withoutFirst];
-}
-
-interface ShoppingPlan {
-  stores: StoreName[];
-  assignment: Map<number, StoreName>;
-}
-
-/**
- * Valor comparável de um resultado para um produto: preço por kg/unidade
- * quando existe e bate com a unidade do produto (mesma regra do "Mais
- * barato" — nunca compara kg com unidade). Só cai para o preço bruto da
- * etiqueta quando NENHUM resultado da linha tem preço por unidade utilizável
- * — melhor um plano aproximado do que nenhum, mas prefere sempre a
- * comparação justa quando ela existe.
- */
-function comparableValue(result: PriceResult, comparisonUnit: "kg" | "unit", useRawPriceFallback: boolean): number | null {
-  const unitValue = perUnitValue(result);
-  if (unitValue && unitValue.unit === comparisonUnit) return unitValue.value;
-  if (useRawPriceFallback && result.price !== null) return result.price;
-  return null;
-}
-
-function computeShoppingPlan(rows: SheetProductRow[], rowResultsByRow: Map<number, (PriceResult | undefined)[]>): ShoppingPlan {
-  let candidateSets: StoreName[][] = [];
-  for (let size = 1; size <= MAX_STORES_TO_VISIT; size++) {
-    candidateSets = candidateSets.concat(storeCombinations(ALL_STORES, size));
-  }
-
-  // Por linha, só cai pro preço bruto (sem normalizar por kg/unidade) quando
-  // nenhum resultado daquela linha tem um preço por unidade utilizável.
-  const rawFallbackNeeded = new Map<number, boolean>();
+function countCheapestByStore(rows: SheetProductRow[], rowResultsByRow: Map<number, (PriceResult | undefined)[]>): Map<StoreName, number> {
+  const counts = new Map<StoreName, number>(ALL_STORES.map((s) => [s, 0]));
   for (const row of rows) {
     const rowResults = rowResultsByRow.get(row.rowNumber) ?? [];
-    const hasUsableUnitValue = rowResults.some(
-      (r) => r && r.status === "ok" && perUnitValue(r)?.unit === row.product.comparisonUnit,
-    );
-    rawFallbackNeeded.set(row.rowNumber, !hasUsableUnitValue);
-  }
-
-  let best: { stores: StoreName[]; coverage: number; totalCost: number; assignment: Map<number, StoreName> } | null = null;
-
-  for (const set of candidateSets) {
-    let coverage = 0;
-    let totalCost = 0;
-    const assignment = new Map<number, StoreName>();
-
-    for (const row of rows) {
-      const rowResults = rowResultsByRow.get(row.rowNumber) ?? [];
-      const useRawFallback = rawFallbackNeeded.get(row.rowNumber) ?? false;
-      let bestStore: StoreName | null = null;
-      let bestPrice = Infinity;
-      for (const result of rowResults) {
-        if (!result || result.status !== "ok") continue;
-        if (!set.includes(result.store)) continue;
-        const value = comparableValue(result, row.product.comparisonUnit, useRawFallback);
-        if (value !== null && value < bestPrice) {
-          bestPrice = value;
-          bestStore = result.store;
-        }
-      }
-      if (bestStore) {
-        coverage++;
-        totalCost += bestPrice;
-        assignment.set(row.rowNumber, bestStore);
-      }
-    }
-
-    if (!best || coverage > best.coverage || (coverage === best.coverage && totalCost < best.totalCost)) {
-      best = { stores: set, coverage, totalCost, assignment };
+    const cheapest = findCheapestStores(rowResults, row.product.comparisonUnit);
+    for (const storeName of cheapest) {
+      const store = storeName as StoreName;
+      counts.set(store, (counts.get(store) ?? 0) + 1);
     }
   }
-
-  return { stores: best?.stores ?? [], assignment: best?.assignment ?? new Map() };
+  return counts;
 }
 
-const PLAN_COLUMN_LETTER = "M";
+const SUMMARY_COLUMN_LETTER = "M";
+const SUMMARY_CLEAR_ROWS = 40;
 
 export async function writeResultsToSheet(sheetInfo: SheetInfo, results: PriceResult[]): Promise<void> {
   const sheetsClient = await getSheetsClient();
@@ -342,29 +271,20 @@ export async function writeResultsToSheet(sheetInfo: SheetInfo, results: PriceRe
     }
   }
 
-  const plan = computeShoppingPlan(sheetInfo.rows, rowResultsByRow);
-  const headerRowNumber = sheetInfo.rows[0] ? sheetInfo.rows[0].rowNumber - 1 : 2;
-  const summaryRowNumber = headerRowNumber - 1 > 0 ? headerRowNumber - 1 : headerRowNumber;
+  // Limpa a coluna M inteira antes de escrever o resumo novo, pra não sobrar
+  // lixo de versões antigas (ex.: o plano por linha que existia antes).
+  await sheetsClient.spreadsheets.values.clear({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `'${SHEET_TAB}'!${SUMMARY_COLUMN_LETTER}1:${SUMMARY_COLUMN_LETTER}${SUMMARY_CLEAR_ROWS}`,
+  });
 
-  data.push({ range: `'${SHEET_TAB}'!${PLAN_COLUMN_LETTER}${headerRowNumber}`, values: [["Onde comprar (plano de no máx. 2 mercados)"]] });
+  const counts = countCheapestByStore(sheetInfo.rows, rowResultsByRow);
+  const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1]);
 
-  if (plan.stores.length > 0) {
-    const counts = new Map<StoreName, number>();
-    for (const store of plan.assignment.values()) counts.set(store, (counts.get(store) ?? 0) + 1);
-    const summary = plan.stores
-      .filter((s) => (counts.get(s) ?? 0) > 0)
-      .map((s) => `${s} (${counts.get(s)} produtos)`)
-      .join(" + ");
-    data.push({ range: `'${SHEET_TAB}'!${PLAN_COLUMN_LETTER}${summaryRowNumber}`, values: [[`Visite: ${summary}`]] });
-  }
-
-  for (const row of sheetInfo.rows) {
-    const store = plan.assignment.get(row.rowNumber);
-    data.push({
-      range: `'${SHEET_TAB}'!${PLAN_COLUMN_LETTER}${row.rowNumber}`,
-      values: [[store ?? "Não disponível nas lojas escolhidas"]],
-    });
-  }
+  data.push({ range: `'${SHEET_TAB}'!${SUMMARY_COLUMN_LETTER}1`, values: [["Resumo: produtos mais baratos por mercado"]] });
+  ranked.forEach(([store, count], i) => {
+    data.push({ range: `'${SHEET_TAB}'!${SUMMARY_COLUMN_LETTER}${i + 2}`, values: [[`${store}: ${count}`]] });
+  });
 
   if (data.length === 0) return;
 

@@ -13,14 +13,74 @@ export interface UnitValue {
   unit: "kg" | "unit";
 }
 
-/** Extrai um valor numérico E a unidade de "€1,16 per stuk" / "€6,65 per kilo".
- * Nunca compara €/kg com €/unidade — são coisas diferentes. */
-export function perUnitValue(result: PriceResult): UnitValue | null {
-  if (result.status !== "ok" || !result.pricePerUnit) return null;
-  const match = /([\d.,]+)\s*(?:per|\/)\s*(kilo|kg|stuk)/i.exec(result.pricePerUnit);
+/** "1+1 gratis" -> compra 1, leva 2 -> multiplicador 0.5 no preço unitário
+ * efetivo. "2+1 gratis" -> compra 2, leva 3 -> 2/3. Sem promoção desse tipo,
+ * multiplicador 1 (preço normal). */
+function promotionMultiplier(promotion: string | null): number {
+  if (!promotion) return 1;
+  const match = /(\d+)\s*\+\s*(\d+)\s*gratis/i.exec(promotion);
+  if (!match) return 1;
+  const buy = Number(match[1]);
+  const free = Number(match[2]);
+  return buy > 0 ? buy / (buy + free) : 1;
+}
+
+function parseWeightToKg(text: string): number | null {
+  const match = /([\d.,]+)\s*(kg|g)\b/i.exec(text);
   if (!match) return null;
-  const unit = /stuk/i.test(match[2]!) ? "unit" : "kg";
-  return { value: Number(match[1]!.replace(",", ".")), unit };
+  const value = Number(match[1]!.replace(",", "."));
+  if (!(value > 0)) return null;
+  return /kg/i.test(match[2]!) ? value : value / 1000;
+}
+
+function parseUnitCount(text: string): number | null {
+  if (/^per\s+stuk$/i.test(text.trim())) return 1;
+  const match = /(\d+)\s*stuks?\b/i.exec(text);
+  if (match) {
+    const value = Number(match[1]);
+    return value > 0 ? value : null;
+  }
+  return null;
+}
+
+/**
+ * Todos os valores comparáveis (€/kg e/ou €/unidade) que dá pra extrair de um
+ * resultado, já aplicando o multiplicador de promoções tipo "1+1 gratis"
+ * (preço efetivo por unidade, não o preço cheio). Prioriza o €/kg ou €/stuk
+ * que a própria loja já calculou (`pricePerUnit`); quando não existe, deriva
+ * da quantidade (ex.: "450 g", "2 stuks") e do preço mostrado.
+ */
+export function perUnitValues(result: PriceResult): UnitValue[] {
+  if (result.status !== "ok") return [];
+  const multiplier = promotionMultiplier(result.promotion);
+  const values: UnitValue[] = [];
+
+  if (result.pricePerUnit) {
+    const match = /([\d.,]+)\s*(?:per|\/)\s*(kilo|kg|stuk)/i.exec(result.pricePerUnit);
+    if (match) {
+      const unit = /stuk/i.test(match[2]!) ? "unit" : "kg";
+      values.push({ value: Number(match[1]!.replace(",", ".")) * multiplier, unit });
+    }
+  }
+
+  if (result.price !== null && result.quantity) {
+    const weightKg = parseWeightToKg(result.quantity);
+    if (weightKg !== null) {
+      values.push({ value: (result.price / weightKg) * multiplier, unit: "kg" });
+    }
+    const count = parseUnitCount(result.quantity);
+    if (count !== null) {
+      values.push({ value: (result.price / count) * multiplier, unit: "unit" });
+    }
+  }
+
+  return values;
+}
+
+/** Primeiro valor comparável disponível (compat: quando só interessa "tem
+ * algum preço por unidade ou não", sem se importar com qual). */
+export function perUnitValue(result: PriceResult): UnitValue | null {
+  return perUnitValues(result)[0] ?? null;
 }
 
 export function cellText(result: PriceResult | undefined): string {
@@ -39,14 +99,15 @@ export function cellText(result: PriceResult | undefined): string {
 /**
  * Só compara preços dentro da mesma unidade (kg com kg, unidade com
  * unidade) — nunca "€0,40 por banana" contra "€1,39 por kg", por exemplo.
+ * Já usa o preço efetivo de promoções tipo "1+1 gratis" (ver perUnitValues).
  * Quando os resultados disponíveis usam unidades diferentes entre si e o
  * produto não deixa claro qual usar, não declara vencedor.
  */
 export function findCheapestStores(rowResults: (PriceResult | undefined)[], comparisonUnit: "kg" | "unit"): Set<string> {
   const withValue = rowResults
     .filter((r): r is PriceResult => !!r)
-    .map((r) => ({ result: r, unitValue: perUnitValue(r) }))
-    .filter((x): x is { result: PriceResult; unitValue: UnitValue } => x.unitValue !== null && x.unitValue.unit === comparisonUnit);
+    .flatMap((r) => perUnitValues(r).map((unitValue) => ({ result: r, unitValue })))
+    .filter((x) => x.unitValue.unit === comparisonUnit);
 
   if (withValue.length === 0) return new Set();
   const min = Math.min(...withValue.map((x) => x.unitValue.value));
