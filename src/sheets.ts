@@ -93,6 +93,7 @@ export interface SheetProductRow {
   rowNumber: number;
   rawName: string;
   product: Product;
+  existingValues: Partial<Record<StoreName, string>>;
 }
 
 export interface SheetInfo {
@@ -160,10 +161,50 @@ export async function loadSheetProducts(): Promise<SheetInfo> {
     const rawName = rows[i]?.[0]?.trim();
     if (!rawName) continue;
     const rowNumber = i + 1;
-    productRows.push({ rowNumber, rawName, product: resolveSheetProduct(rawName, rowNumber) });
+    const existingValues: Partial<Record<StoreName, string>> = {};
+    for (const store of ALL_STORES) {
+      const colIndex = storeColumns[store];
+      if (colIndex === undefined) continue;
+      const value = rows[i]?.[colIndex];
+      if (value) existingValues[store] = String(value);
+    }
+    productRows.push({ rowNumber, rawName, product: resolveSheetProduct(rawName, rowNumber), existingValues });
   }
 
   return { storeColumns, cheapestColumn, rows: productRows };
+}
+
+/**
+ * A automação nunca deve apagar um preço real já anotado na planilha (seja de
+ * uma execução anterior com sucesso, seja digitado manualmente por alguém que
+ * checou o site à mão). Só sobrescreve quando o resultado novo é "ok" (preço
+ * de verdade encontrado agora) — "não encontrado"/"verificação manual" nunca
+ * derrubam um valor que já existia.
+ */
+function shouldOverwrite(existingValue: string | undefined, result: PriceResult | undefined): boolean {
+  if (!result) return false;
+  if (result.status === "ok") return true;
+  return !existingValue || !existingValue.includes("€");
+}
+
+/** Reconstrói um PriceResult mínimo a partir de um texto já salvo na célula,
+ * só com o que a comparação de "mais barato" precisa (preço e €/kg-unidade). */
+function parsePreservedCell(store: StoreName, text: string | undefined): PriceResult | undefined {
+  if (!text || !text.includes("€")) return undefined;
+  const priceMatch = /€\s*([\d.,]+)/.exec(text);
+  if (!priceMatch) return undefined;
+  const perUnitMatch = /€\s*[\d.,]+\s*per\s*(?:kilo|kg|stuk)/i.exec(text);
+  return {
+    store,
+    productId: "",
+    displayName: "",
+    status: "ok",
+    price: Number(priceMatch[1]!.replace(",", ".")),
+    quantity: null,
+    pricePerUnit: perUnitMatch ? perUnitMatch[0] : null,
+    promotion: null,
+    url: null,
+  };
 }
 
 export async function writeResultsToSheet(sheetInfo: SheetInfo, results: PriceResult[]): Promise<void> {
@@ -174,12 +215,22 @@ export async function writeResultsToSheet(sheetInfo: SheetInfo, results: PriceRe
   const data: { range: string; values: string[][] }[] = [];
 
   for (const row of sheetInfo.rows) {
-    const rowResults = ALL_STORES.map((store) => byProductAndStore.get(`${row.product.id}::${store}`));
+    const rowResults = ALL_STORES.map((store) => {
+      const fresh = byProductAndStore.get(`${row.product.id}::${store}`);
+      // Se o valor da planilha vai ser preservado (não sobrescrito), usa esse
+      // valor preservado na comparação de mais barato também — senão a coluna
+      // "Mais barato" ignoraria um preço manual que continua lá.
+      if (!shouldOverwrite(row.existingValues[store], fresh)) {
+        return parsePreservedCell(store, row.existingValues[store]) ?? fresh;
+      }
+      return fresh;
+    });
 
     for (const store of ALL_STORES) {
       const colIndex = sheetInfo.storeColumns[store];
       if (colIndex === undefined) continue;
       const result = byProductAndStore.get(`${row.product.id}::${store}`);
+      if (!shouldOverwrite(row.existingValues[store], result)) continue;
       data.push({
         range: `'${SHEET_TAB}'!${columnLetters(colIndex)}${row.rowNumber}`,
         values: [[cellText(result)]],
