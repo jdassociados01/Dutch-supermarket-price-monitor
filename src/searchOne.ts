@@ -3,8 +3,7 @@ import { chromium } from "playwright";
 import { ALL_STORES } from "./stores.js";
 import { CHECK_FUNCTIONS } from "./scraper.js";
 import type { PriceResult } from "./scraper.js";
-import type { Product } from "./products.js";
-import { readSearchQuery, writeSearchResults } from "./sheets.js";
+import { readSearchQuery, writeSearchResults, resolveSheetProduct } from "./sheets.js";
 import { sendSearchDoneEmail } from "./email.js";
 
 function formatResult(result: PriceResult): string {
@@ -26,14 +25,14 @@ async function run(): Promise<void> {
     return;
   }
 
-  // Produto avulso: usa o texto digitado como único termo de busca, sem
-  // marca exigida (a curadoria de products.ts é só pra lista semanal fixa).
-  const product: Product = {
-    id: "busca_avulsa",
-    displayName: productName,
-    searchTerms: [productName],
-    comparisonUnit: "kg",
-  };
+  // Mesma correção de digitação da lista semanal: se o que foi digitado
+  // parecer com um produto já cadastrado em products.ts (ex.: "Lindhals
+  // Protein" -> "Lindahls Protein"), usa os termos de busca e a marca
+  // corretos daquele produto em vez do texto digitado literalmente.
+  const product = resolveSheetProduct(productName, 0);
+  if (product.displayName !== productName) {
+    console.log(`Corrigido para produto conhecido: "${product.displayName}" (termos: ${product.searchTerms.join(", ")}).`);
+  }
 
   console.log(`Buscando "${productName}" em ${ALL_STORES.length} lojas...`);
 
@@ -58,7 +57,7 @@ async function run(): Promise<void> {
   console.log("Planilha atualizada.");
 
   try {
-    await sendSearchDoneEmail(productName, results);
+    await sendSearchDoneEmail(productName);
     console.log("E-mail de aviso enviado.");
   } catch (err) {
     console.log(`Aviso: não consegui enviar o e-mail (${(err as Error).message}). A planilha já foi atualizada de qualquer forma.`);
